@@ -1,0 +1,105 @@
+library(BiocManager)
+library(limma)
+library(biomaRt)
+library(org.Hs.eg.db)
+library(ggplot2)
+library(HGNChelper)
+library(dplyr)
+library(plyr)
+library(tibble)
+library(GEOquery)
+setwd("D:/vipul R/76826")
+# list the files to read them at once
+list_GSE76826=list.files(pattern = "*.txt", full.names = F, ignore.case = T)
+
+# convert the data to an EListRaw object,
+GSE76826=read.maimages(files = list_GSE76826, source = "agilent", green.only = T,  other.columns = 'gIsWellAboveBG')
+
+colnames(GSE76826)=gsub("_.*","",colnames(GSE76826))
+
+# Box plot for raw intensities
+box_rawGSE76826=as.data.frame(GSE76826$E)
+#box_rawGSE76826= log2(box_rawGSE76826)
+box_raw_stackGSE76826=stack(box_rawGSE76826)
+ggplot(box_raw_stackGSE76826) + geom_boxplot(aes(x = ind, y = values))+
+  theme_bw()+
+  xlab("Samples")+
+  ylab("log2 transformed raw intensities")+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + ggtitle("raw_76826")
+
+# gene Annotation
+mart <- useMart('ENSEMBL_MART_ENSEMBL','hsapiens_gene_ensembl')
+#mart <- useDataset('hsapiens_gene_ensembl', mart)
+GSE76826_probeIDs=GSE76826$genes$ProbeName
+annotLookup_GSE76826 <- getBM(
+  mart = mart,
+  attributes = c(
+    'agilent_sureprint_g3_ge_8x60k_v2',"hgnc_symbol"),
+  filter = 'agilent_sureprint_g3_ge_8x60k_v2',
+  values = GSE76826_probeIDs)
+
+colnames(annotLookup_GSE76826)[1] <- 'AgilentID' # Set column name
+
+# MAtch the annotated genes with that of Agilent IDs. 
+annotLookup_GSE76826 <- annotLookup_GSE76826[which(annotLookup_GSE76826$AgilentID %in% GSE76826$genes$ProbeName),]
+annotLookup_GSE76826 <- annotLookup_GSE76826[match(GSE76826$genes$ProbeName, annotLookup_GSE76826$AgilentID),]
+
+# Number of probes annotated
+table(GSE76826$genes$ProbeName == annotLookup_GSE76826$AgilentID) #33056  probes with annotation
+
+# Check probe names with HGNC 
+gSymbols=annotLookup_GSE76826$hgnc_symbol
+check.Symbols=checkGeneSymbols(gSymbols, unmapped.as.na = TRUE, map = NULL,
+                               species = "human")
+
+check.Symbols$x[check.Symbols$x==""]=NA
+table(check.Symbols$x==check.Symbols$Suggested.Symbol) 
+
+# Use HGNC symbols from HGNC helper (Suggested names)
+# Add probe names and gene symbols to the ElistRaw object 
+GSE76826$genes$AgilentID <- annotLookup_GSE76826$AgilentID
+GSE76826$genes$HGNCsymbol <- check.Symbols$Suggested.Symbol
+
+# perform background correction on the fluorescent intensities
+# https://www.rdocumentation.org/packages/limma/versions/3.28.14/topics/backgroundCorrect
+Norm_GSE76826 <- backgroundCorrect(GSE76826, method = 'normexp', offset=0)
+
+# Box plot for Batch corrected intensities
+box_bgcorrectGSE76826=as.data.frame(Norm_GSE76826$E)
+#box_bgcorrectGSE60678= log2(box_bgcorrectGSE60678)
+box_bgcorrect_stackGSE76826=stack(box_bgcorrectGSE76826)
+
+ggplot(box_bgcorrect_stackGSE76826) + geom_boxplot(aes(x = ind, y = values))+
+  theme_bw()+
+  xlab("Samples")+
+  ylab("log2 transformed raw intensities")+ ylim(0, 2000)+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+
+
+Control= Norm_GSE76826$genes$ControlType==1L
+#  QnormGSE60678$genes$ControlType==1L 
+# The unassigned probes from biomart may exist as blank cells and NA
+# Identify blank cells and replace it with NA
+table(Norm_GSE76826$genes$HGNCsymbol[Norm_GSE76826$genes$HGNCsymbol==""])
+Norm_GSE76826$genes$HGNCsymbol[Norm_GSE76826$genes$HGNCsymbol==""]=NA
+#QnormGSE60678$other$gIsWellAboveBG
+NoSymbol <- is.na(Norm_GSE76826$genes$HGNCsymbol) #13874
+IsExpr <- rowSums(Norm_GSE76826$other$gIsWellAboveBG > 0) >= 11 #40128 (25% or 50% of the total sample number criteria can be used for filtering, Suggested by Kevin to Parin, Biostars)
+QnormGSE76826.filt <- Norm_GSE76826[!Control & !NoSymbol & IsExpr, ]
+dim(Norm_GSE76826)# 43931    67
+dim(QnormGSE76826.filt) # 20093    67
+
+# Keep columns which are needed
+QnormGSE76826.filt$genes <- QnormGSE76826.filt$genes[,c("HGNCsymbol", "AgilentID")]
+head(QnormGSE76826.filt$genes)
+
+# limma avereps for averaging out the intensities for duplicate genes
+# The averep function also assigns the gene symbols (input for ID) as rownames to the expression matrix
+QnormGSE76826.filt.mean <- avereps(as.data.frame(QnormGSE76826.filt$E),
+                                   ID = QnormGSE76826.filt$genes$HGNCsymbol)
+dim(QnormGSE76826.filt.mean) #  13891    67
+
+GSE76826.df= as.data.frame(QnormGSE76826.filt.mean)
+#saving file
+#aveRDS(GSE76826.df,"76826.rds")
