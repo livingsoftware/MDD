@@ -1,0 +1,95 @@
+library(tidyr)
+library(plyr)
+library(dplyr)
+library(tibble)
+library(sva)
+library(ggfortify)
+
+
+
+#/ Read Quantile normalized train and test data
+
+Train1.qnorm=readRDS("train1.qnorm.rds")
+test1.qnorm=readRDS("test1.qnorm.rds")
+
+# Separate the pheno-data
+
+labels.Train1= Train1.qnorm[c(11069:11072),]
+labels.test1= test1.qnorm[c(11069:11072),]
+
+#/ Train 1
+
+Train1.qnorm.df=Train1.qnorm[-c(11069:11072),]
+Train1.qnorm.mat= as.matrix(Train1.qnorm.df)
+class(Train1.qnorm.mat)="numeric"
+p.data=as.data.frame(t(labels.Train1))
+# Batch correction using ComBat
+
+
+Train1.qnorm.t= as.data.frame(t(Train1.qnorm))
+batch.train1= as.factor(Train1.qnorm.t$batch)
+modcombat.train1 = model.matrix(~1, data= as.data.frame(t(labels.Train1)))
+
+Train1.bc = ComBat(dat=Train1.qnorm.mat, batch=as.factor(p.data$batch), mod=modcombat.train1, par.prior=TRUE, prior.plots=FALSE)
+
+# Add back rows for pheno-data
+Train1.bc.ph= rbind(Train1.bc, labels.Train1)
+
+#/ PCA plot
+
+# Raw train data
+abc=prcomp(t(Train1.qnorm.mat), scale.=TRUE)
+autoplot(abc, data=t(labels.Train1), colour= "gse_id")+ theme_bw()
+
+# Batch corrected train data
+pqr=prcomp(t(Train1.bc), scale.=TRUE)
+autoplot(pqr, data=t(labels.Train1), colour= "gse_id")+ theme_bw()
+
+
+# Save batch corrected file
+saveRDS(Train1.bc.ph, "train1.batch-corrected.rds")
+
+#/ Test 1
+# Batch correct data with train data as reference
+
+# Bind train and test phdata
+test1.combat.phdata= cbind(labels.Train1, labels.test1)
+a=as.data.frame(t(test1.combat.phdata))
+a$ref.batch=8
+a$ref.batch[c(378:419)]=a$batch[c(378:419)]
+
+# Bind batch corrected train and raw test data
+
+test1.qnorm.df=test1.qnorm[-c(11069:11072),]
+test1.qnorm.mat= as.matrix(test1.qnorm.df)
+class(test1.qnorm.mat)="numeric"
+test1.combat.data=cbind(Train1.bc,test1.qnorm.mat)
+
+# Batch correction
+labels.test.t= as.data.frame(t(labels.test1))
+batch.test1=a$ref.batch
+modcombat.test1 = model.matrix(~1, data=a)
+
+
+combat.test1 = ComBat(dat=test1.combat.data, batch=batch.test1, mod=modcombat.test1, 
+                      par.prior=TRUE, prior.plots=FALSE, ref.batch = 8 )
+
+test1.bc = combat.test1[,colnames(test1.qnorm)]# test.qnorm has sample ids
+dim(test1.bc)# Batch corrected test data
+
+# Add back rows for labels
+test1.bc.ph= rbind(test1.bc, labels.test1)
+
+# PCA plot
+a$ref.info="train"
+a$ref.info[378:419]=a$gse_id[378:419]
+# Raw test data
+abc=prcomp(t(test1.combat.data), scale.=TRUE)
+autoplot(abc, data= a, colour= "ref.info")+ theme_bw()
+
+# Batch corrected test data
+pqr=prcomp(t(combat.test1), scale.=TRUE)
+autoplot(pqr, data=a, colour= "ref.info")+ theme_bw()
+# Save files
+saveRDS(test1.bc.ph, "test1.batch-corrected.rds")
+
