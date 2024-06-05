@@ -1,0 +1,86 @@
+library(caret)
+library(ranger)
+library(e1071)
+library(xgboost)
+library(pamr)
+library(glmnet)
+library(pROC)
+library(dplyr)
+library(doParallel)
+library(tictoc)
+library(beepr)
+setwd(" ")
+#model reading
+model.3=readRDS("logisticR.Mod.10.rds")
+model.4=readRDS("RandomF.Mod.10.rds")
+model.5=readRDS("SVM.Mod.10.rds")
+#threshold setting
+lG=0.523
+RF=.58
+SVM=.558
+#reading independent data set 
+e=readRDS("ex1.rds")# change the number based on the type of proceesed file of independent datset 
+test=(e)
+test=as.matrix(test)
+class(test)="numeric"
+# model prediction
+pret3=predict(model.3,t(test),type="prob")
+pret4=predict(model.4,t(test),type="prob")
+pret5=predict(model.5,newdata=t(test),probability = T)
+####reading pheno data####
+ex.p=read.csv("p.exv.csv")
+#LOGESTIC REGRESSION
+d=roc(factor(ex.p[,2]),pret3[,1])
+plot(d)
+auc(d)
+prediction <- as.numeric(pret3[,1] >lG)
+prediction=as.list(prediction)
+p=rapply(prediction,function(x) ifelse(x==1,"case",x),how ="replace")
+p=rapply(p,function(x) ifelse(x==0,"control",x),how ="replace")
+p=unlist(p)
+prediction=as.factor(p)
+confusionMatrix(prediction,factor(ex.p$group))
+#Random Forest
+d=roc(factor(ex.p[,2]),pret4[,1])
+plot(d)
+auc(d)
+prediction <- as.numeric(pret4[,1] >RF)
+prediction=as.list(prediction)
+p=rapply(prediction,function(x) ifelse(x==1,"case",x),how ="replace")
+p=rapply(p,function(x) ifelse(x==0,"control",x),how ="replace")
+p=unlist(p)
+prediction=as.factor(p)
+confusionMatrix(prediction,factor(ex.p$group))
+#SVM
+p=attr(pret5,"probabilities")
+d=roc(factor(ex.p[,2]),p[,2])
+plot(d,scale=T)
+auc(d)
+prediction <- as.numeric(p[,2] >SVM)
+prediction=as.list(prediction)
+p=rapply(prediction,function(x) ifelse(x==1,"case",x),how ="replace")
+p=rapply(p,function(x) ifelse(x==0,"control",x),how ="replace")
+p=unlist(p)
+prediction=as.factor(p)
+confusionMatrix(prediction,factor(ex.p$group))
+#######################enesmble results#######################
+p3<- as.numeric(pret3[,1] >lG)
+p4<-as.numeric(pret4[,1]>RF)
+p=attr(pret5,"probabilities")
+p5 <- as.numeric(p[,2] >SVM)
+dat=data.frame(p3,p4,p5)
+#SVM-lr
+dat$der=dat$p3+dat$p5
+vot=rapply(list(dat$der),function(x)ifelse(x>=2,"case",x),how="replace")
+vot=rapply(vot,function(x)ifelse(x<=1,"control",x),how="replace")
+vot=unlist(vot)
+prediction=as.factor(vot)
+confusionMatrix(prediction,factor(ex.p[,2]))
+#svm-RF
+dat$der=dat$p4+dat$p5
+vot=rapply(list(dat$der),function(x)ifelse(x>=2,"case",x),how="replace")
+vot=rapply(vot,function(x)ifelse(x<=1,"control",x),how="replace")
+vot=unlist(vot)
+prediction=as.factor(vot)
+confusionMatrix(prediction,factor(ex.p[,2]))
+
