@@ -1,0 +1,103 @@
+
+
+
+library(biomaRt)
+library(limma)
+library(tibble)
+library(dplyr)
+library(plyr)
+library(HGNChelper)
+library(oligo)
+library(stringr)
+
+#/ SET WORKING DIRECTORY
+
+setwd(" ")
+
+#/ LIST .CEL FILES
+
+list=list.files(full.names = T,pattern = ".CEL")
+
+#/ READING RAW DATA
+
+RAW.GSE98793<-read.celfiles(list.files(pattern = '*CEL', full.names = TRUE))
+
+#/ FETCHING PHENOTYPE DATA
+
+ph.data<-read.csv("pheno93.csv",header = T)
+
+#/ PERFORM RMA
+GSE98793.rma= rma(RAW.GSE98793, background=TRUE, normalize= FALSE)
+View(GSE98793.rma@assayData$exprs)
+
+#/ RAW EXPRESSION MATRIX AS DATA FRAME
+RAW.GSE98793.DF = as.data.frame(exprs(GSE98793.rma))
+
+View(RAW.GSE18312.DF)
+
+# Editing column names of the raw expression matrix df
+
+colnames(RAW.GSE98793.DF)=ph.data$sample_id
+colnames(RAW.GSE98793.DF)
+
+#/ GENE ANNOTATION
+
+
+
+Martfunction=useMart("ENSEMBL_MART_ENSEMBL")
+Martfunction=useDataset("hsapiens_gene_ensembl",Martfunction)
+GSE98793.pIDs=rownames(RAW.GSE98793.DF)
+GS.pIDs.98793= getBM(attributes = c("affy_hg_u133_plus_2", "hgnc_symbol"),
+                     filters = "affy_hg_u133_plus_2",
+                     values = GSE98793.pIDs,
+                     mart = Martfunction)
+
+dim(GS.pIDs.98793)#49456     2
+
+#/ REMOVE UNASSIGNED PROBE-IDS
+
+GS.pIDs.98793.df=GS.pIDs.98793[!(GS.pIDs.98793$hgnc_symbol==""),]
+
+#/ VERIFY GENE SYMBOLS WITH HGNC
+
+geneSymbols.verified<-checkGeneSymbols(GS.pIDs.98793.df$hgnc_symbol, species = "human")
+
+# Exchange the columns with corrected values (from verified to unverified gene symbol df)
+
+GS.pIDs.98793.df$hgnc_symbol<-geneSymbols.verified$Suggested.Symbol
+
+# Creating blank spaces in place of NA and then removing the blank spaces 
+
+GS.pIDs.98793.df[is.na(GS.pIDs.98793.df)] <- ""
+GS.pIDs.98793.df=GS.pIDs.98793.df[!(GS.pIDs.98793.df$hgnc_symbol==""),]
+
+#/ BRING ROW-NAMES TO COLUMN IN RAW EXPRESSSION DATA
+
+RAW.GSE98793.DF=rownames_to_column(RAW.GSE98793.DF, "PIDs")
+colnames(GS.pIDs.98793.df)[1]= "PIDs"
+
+#/ ADD GENE SYMBOLS TO NORMALIZED DATA
+
+GSE98793.geneSymbols= merge(GS.pIDs.98793.df,RAW.GSE98793.DF, by= "PIDs")
+
+dim(GSE98793.geneSymbols)# 43679   194
+
+#/ AVERAGE OUT DUPLICATE GENE SYMBOLS ROW-WISE USING LIMMA AVEREPS
+
+GSE98793.avreps=as.data.frame((limma::avereps(GSE98793.geneSymbols, GSE98793.geneSymbols$hgnc_symbol)))
+
+dim(GSE98793.avreps)#21715   194
+
+#/ HAVE UNIQUE GENE SYMBOLS AS ROW IDS
+
+GSE98793.avreps.df=column_to_rownames(GSE98793.avreps, "hgnc_symbol")
+GSE98793.avreps.final=GSE98793.avreps.df[-c(1)] # remove unwanted column
+dim(GSE98793.avreps.final)# 21715   192
+view(GSE98793.avreps.final)
+
+abc = mutate_all(GSE98793.avreps.final, function(x) as.numeric(as.character(x)))
+
+GSE98793.avreps.AL= 2^abc # RMA performs log transformation , this is to remove it 
+View(GSE98793.avreps.AL)
+
+saveRDS(GSE98793.avreps.AL,  "98793.rds")
