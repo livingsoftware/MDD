@@ -1,0 +1,111 @@
+library(lumi)
+library(plyr)
+library(HGNChelper)
+library(stringr)
+library(tibble)
+#/ SETTING WORKING DIRECTORY
+
+setwd(" ")
+
+#/ LISTING FILES IN THE DIRECTORY
+
+txt.gse46743<-list.files("/", pattern="txt")
+
+#/ READING RAW DATA
+RAW.DATA.GSE46743 <- lumiR("GSE46743_non-normalized.txt.gz", convertNuID = TRUE, 
+                           lib.mapping = 'lumiHumanIDMapping', QC = TRUE,  dec = '.', parseColumnName = TRUE,checkDupId = T,
+                           columnNameGrepPattern = list(exprs='sample', se.exprs='NA', detection='Detection'))
+dim(RAW.DATA.GSE46743) #48726      320 
+
+#/ FILTERING EXPRESSED PROBES by taking the average of 3 probes<0.05
+
+EXPRESSED.PROBES<- rowSums(RAW.DATA.GSE46743@assayData$detection<0.05)>=3
+
+# Subtract from main object or retain only expressed probes in expression matrix
+
+GSE46743.RAW=RAW.DATA.GSE46743[EXPRESSED.PROBES,]
+dim(GSE46743.RAW) #35515      320 
+
+## FETCHING PHENOTYPE DATA
+
+phData<- read.csv("pheno43.csv",header = T)
+
+colnames(GSE46743.RAW)= phData$sample_id
+colnames(GSE46743.RAW)
+
+#/ PERFORMING BACKGROUND CORRECTION
+
+BCOR.GSE46743<- lumiB(GSE46743.RAW)
+class(GSE46743.RAW)
+dim(BCOR.GSE46743)#35515      320 
+
+# Extract background corrected matrix
+
+BCOR.GSE46743.matrix= exprs(BCOR.GSE46743)
+dim(BCOR.GSE46743.matrix)
+
+# Check for negative values and replace them with zero
+
+abc=apply(BCOR.GSE46743.matrix, 1, function(row) any(row<0))
+length(which(abc)) # 0 rows with negative values
+
+BCOR.GSE46743.matrix[BCOR.GSE46743.matrix<0]=0
+
+BCOR.GSE46743.df= as.data.frame(BCOR.GSE46743.matrix)
+
+dim(BCOR.GSE46743.df) #35515 
+
+## GENE ANNOTATION
+
+BCOR.GSE46743.df= rownames_to_column(BCOR.GSE46743.df)
+
+GENE.SYMBOLS<- nuID2targetID(BCOR.GSE46743.df$rowname, lib.mapping = "lumiHumanIDMapping")
+
+GENE.SYMBOLS= as.data.frame(GENE.SYMBOLS)
+
+GENE.SYMBOLS.sub = GENE.SYMBOLS$GENE.SYMBOLS
+
+## CHECKING HGNC SYMBOLS
+
+GENE.SYMBOLS[,2:4]<-checkGeneSymbols(GENE.SYMBOLS.sub, species = "human", unmapped.as.na = TRUE)
+
+View(GENE.SYMBOLS)
+
+GENE.SYMBOL.ASSIGNED=na.omit(GENE.SYMBOLS)
+
+table(is.na(GENE.SYMBOL.ASSIGNED$GENE.SYMBOLS))
+
+dim(GENE.SYMBOL.ASSIGNED) #23277
+
+# Remove rows with unassigned gene symbols
+
+GENE.SYMBOL.ASSIGNED= rownames_to_column(GENE.SYMBOL.ASSIGNED, "rownames")
+
+BCOR.GSE.df= rownames_to_column(BCOR.GSE46743.df, "rownames")
+
+GENES.MERGED= merge(GENE.SYMBOL.ASSIGNED, BCOR.GSE46743.df, by="row.names")
+
+dim(GENES.MERGED)#23277 
+
+#/ LIMMA AVEREPS
+
+GSE46743.avreps=as.data.frame((limma::avereps(GENES.MERGED, GENES.MERGED$Suggested.Symbol)))
+
+GSE46743.avreps= GSE46743.avreps[,-c(1:4)]
+View(GSE46743.avreps)
+dim(GSE46743.avreps)#16289 
+
+GSE46743.avreps.final= column_to_rownames(GSE46743.avreps, "Suggested.Symbol")
+dim(GSE46743.avreps.final)# 16289
+
+GSE46743.avreps.final=GSE46743.avreps.final[,-c(1,2)]
+is.numeric(GSE46743.avreps.final)
+GSE46743.avreps.final=as.matrix(GSE46743.avreps.final)
+class(GSE46743.avreps.final)="numeric"
+
+GSE46743.avreps.final=GSE46743.avreps.final[,phData$treatment!="yes"]
+dim(GSE46743.avreps.final)
+phData=phData[phData$treatment!="yes",c(1:4)]
+saveRDS(phData,"pheno43.rds")
+saveRDS(GSE46743.avreps.final, "46743.rds")
+
