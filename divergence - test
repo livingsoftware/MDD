@@ -16,7 +16,6 @@ print(kruskal_test)
 library(dunn.test)
 
 # Perform Dunn test with Bonferroni correction
-dunn_result <- dunn.test(Pres~ Models, data, method = "bonferroni")
 group_list <- split(data$Pres, data$Models)
 
 # Perform Dunn test with Bonferroni correction
