@@ -1,0 +1,108 @@
+library(dplyr)
+library(FNN)
+library(limma)
+library(ggfortify)
+library(sva)
+#SINGLE SAMPLE SAFE
+setwd("D:/vipul R/meta")
+# reading train data
+Dum=readRDS("train1.batch-corrected.rds")
+p.dum=Dum[c(11069:11072),]
+p.dum=as.data.frame(t(p.dum))
+dum=Dum[-c(11069:11072),]
+Dum=Dum[-c(11069:11072),]
+#reading pheno data for independent test data 
+p.test=read.csv("p.exv.csv")
+# READING INDEPENDENT TEST DATA
+test=readRDS("76826.rds")
+# READING TEST DATA (NON NORMALISED) TO SERVE AS A DUMMY DATA
+#NOTE - test data mentioned above is saved as a variable called train in this script
+train=readRDS("test1.rds")
+train=t(train)
+ref=train[-c(1:4),]
+p.train=train[c(1:4),]
+p.train=as.data.frame(t(p.train))
+
+#sub setting THE DATA TO HAVE THE SAME NUMBER OF GENES 
+Train=train[intersect(rownames(train),rownames(test)),]
+test=test[intersect(rownames(train),rownames(test)),]
+dum=dum[intersect(rownames(test),rownames(dum)),]
+#CREATION OF EMPTY DATASET TO HOUSE THE NEW NORMALISED AND BATCH CORRECTED INDEPENDENT TEST DATA
+v.data=data.frame()
+###NORMALISATION AND BATCH CORRECTION IN LOOP WITH DUMMY DATA
+for (x in 1:dim(test)[2]) {
+  v1=test[,x,drop=F]
+  ref=Train
+  ref=cbind(ref,v1)
+  ref=as.matrix(ref)
+  class(ref)="numeric"
+  ref=log2(ref)
+  ref=preprocessCore::normalize.quantiles(ref,copy = T,keep.names = T)
+  ref=as.matrix(ref)
+  data=cbind(dum,ref)  
+  p.data=rbind(p.dum,p.train,p.test[x,])
+  p.data$ref=1
+  p.data$ref[379:420]=2
+  mod=model.matrix(~1,data=p.data)
+  data=as.matrix(data)
+  class(data)="numeric"
+  Data=ComBat(dat=data,batch = p.data$ref,mod = mod,par.prior = T,prior.plots = F,ref.batch = "1")
+  v.data=rbind(v.data,t(Data[,420,drop=F]))
+}
+#NEW EMPTY DATA FRAME TO SAME THE SAMPLES AFTER IMPIUTATION
+v2=data.frame()
+#IMPUTATION WITH KNN IN A LOOP
+for (x in 1:dim(test)[2]) {
+  #kNN
+  
+  
+  train=dum
+  train=as.matrix(train)
+  norm.dat=v.data[x,,drop=F]
+  norm.dat=as.data.frame(t(norm.dat))
+  group=as.factor(p.dum$group)
+  class(train)="numeric"
+  Train=as.data.frame(train)
+  k <- knn(t(Train),t(norm.dat), factor(p.dum[,2]), k = 10, algorithm="cover_tree")
+  indices = attr(k, "nn.index")
+  
+  print(indices[1, ])
+  dists = attr(k, "nn.dist")
+  print(dists[1, ])
+  n=indices[1,1]
+  Norm.dat=t(norm.dat)
+  train=Dum[-c(11069:11072),]
+  sub=setdiff(rownames(train),colnames(Norm.dat))
+  sub=as.data.frame(sub)
+  sub[colnames(norm.dat)]=NA
+  row.names(sub)=sub$sub
+  sub=sub[,2,drop=F]
+  sub[1]=train[intersect(row.names(train),row.names(sub)),n,drop=F]
+  dat=rbind(sub,t(Norm.dat))
+  v2=rbind(v2,t(dat))
+  
+}
+ v2=as.matrix(v2)
+class(v2)="numeric"
+saveRDS(v22,"ex3.rds")
+boxplot(t(v2),outline=F)
+
+ab=cbind(train,t(v2))
+ab=as.matrix(ab)
+class(ab)="numeric"
+abc=prcomp(t(ab),scale. = T)
+autoplot(abc)
+# PCA for thesis 
+data=cbind(Dum,t(v2))
+a=rbind(p.dum,p.test)
+a$ref=1
+a$ref[379:400]=2
+mod=model.matrix(~1,data=a)
+data=as.matrix(data)
+class(data)="numeric"
+Data=ComBat(dat=data,batch = a$ref,mod = mod,par.prior = T,prior.plots = F,ref.batch = "1")
+a$sample="train"
+a$sample[379:400]="independant test data"
+abc=prcomp(t(Data),scale. = T)
+autoplot(abc,data=a,color="sample")+ theme_bw()
+
