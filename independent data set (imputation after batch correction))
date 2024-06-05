@@ -1,0 +1,82 @@
+library(sva)
+library(ggplot2)
+library(ggfortify)
+library(tidyverse)
+library(preprocessCore)
+library(FNN)
+## this script is imputation after batch correction , and it is not single sample compatable
+setwd(" ")
+data=readRDS("76826.rds") # independent test data
+train1=readRDS("train1.batch-corrected.rds") # batch corrected train
+train=readRDS("train1.rds") #non normalised train
+train=train[,-c(1:4)] # removing pheno data
+p.train=train1[c(11069:11072),]# creating a pheno data dataframe
+p.train=as.data.frame(t(p.train))
+train1=train1[-c(11069:11072),] # removing pheno data
+p.dat=read.csv("p.exv.csv") # reading the pheno data of independent dataset
+data=as.matrix(data)
+class(data)="numeric"
+data=log2(data)
+train=as.matrix(train)
+class(train)="numeric"
+train=log2(train)
+data=data[intersect(rownames(data),rownames(train1)),]
+############NORMALISATION ###########
+trainn=normalize.quantiles(t(train),keep.names = T,copy = T)
+train=trainn[intersect(rownames(data),rownames(trainn)),]
+targets=normalize.quantiles.determine.target(train,target.length = NULL,subset = NULL)
+Data=normalize.quantiles.use.target(data,targets)
+dimnames(Data)=dimnames(data)
+boxplot(Data,outline=F)
+boxplot(trainn,outline=F) 
+#############batch correction#######
+p.data=rbind(p.dat,(p.train))
+train=train1[intersect(rownames(data),rownames(train1)),]
+test=cbind(Data,train)
+a=p.data
+a$ref=1
+a$ref[1:22]=2
+a$cl="train"
+a$cl[1:22]="test"
+mod=model.matrix(~1,data = a)
+test=as.matrix(test)
+class(test)="numeric"
+
+c.t=ComBat(test,batch = a$ref,mod=mod,ref.batch = "1")
+pqr=prcomp(t(c.t),scale. = T)
+autoplot(pqr, data=a, colour= "cl")+ theme_bw()
+Dat=c.t[,1:22]
+######################imputation#####################
+v.data=data.frame()
+
+Dat=t(Dat)
+for (x in 1:dim(Dat)[1]) {
+  #kNN
+  Train=train1[intersect(rownames(train1),colnames(Dat)),]
+  norm.dat=Dat[x,,drop=F]
+  norm.dat=as.data.frame(t(norm.dat))
+  Train=as.matrix(Train)
+  class(Train)="numeric"
+  #Train=2^Train
+  k <- knn((t(Train)),t(norm.dat), factor(p.train[,2]), k = 20, algorithm="cover_tree")
+  indices = attr(k, "nn.index")
+  
+  print(indices[1, ])
+   dists = attr(k, "nn.dist")
+   print(dists[1, ])
+  n=indices[1,1]
+  Norm.dat=t(norm.dat)
+  train=trainn
+  sub=setdiff(rownames(train),colnames(Norm.dat))
+  sub=as.data.frame(sub)
+  sub[colnames(norm.dat)]=NA
+  row.names(sub)=sub$sub
+  sub=sub[,2,drop=F]
+  train=as.matrix(train)
+  class(train)="numeric"
+  sub[1]=train1[intersect(row.names(train1),row.names(sub)),n,drop=F]
+  dat=rbind(sub,t(Norm.dat))
+  v.data=rbind(v.data,t(dat))
+  
+}
+saveRDS(v.data,"ex1.rds)
