@@ -1,0 +1,28 @@
+library(ggplot2)
+library(gginference)
+library(ggpubr)
+library(rstatix)
+library(multcompView)
+data=read.csv("Spec.csv") # csv file with data of perfomance metrics
+
+library(stats)
+
+# Perform Kruskal-Wallis test
+kruskal_test <- kruskal.test(Pres~ Models, data = data)
+
+# View test results
+print(kruskal_test)
+
+library(dunn.test)
+
+# Perform Dunn test with Bonferroni correction
+dunn_result <- dunn.test(Pres~ Models, data, method = "bonferroni")
+group_list <- split(data$Pres, data$Models)
+
+# Perform Dunn test with Bonferroni correction
+dunn_result <- dunn.test(group_list, method = "bonferroni")
+
+
+# View test results
+print(dunn_result)
+plot(dunn_result)
